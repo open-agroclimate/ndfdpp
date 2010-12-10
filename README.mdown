@@ -1,0 +1,28 @@
+NDFD Python Processor (ndfdpp.py)
+=================================
+
+This is a way to retrieve the information from the National Weather Service NDFD REST API and put it into a database with the information provided by either a configuration file (currently at the top of the application itself) or a database (in progress). Because the NWS sometimes has issues returning information to the program, it will (via cronjob) attempt to pull every 3 hours no matter what, but will also attempt to fill in any data by checking every 15 minutes if there is any data missing. If so, it will attempt to pull again. This is in attempt to shrink the number of calls on the NWS by us.
+
+* Python 2.7+
+* SQL Database (currently only support MySQL) - MySQLdb
+* Cronjob manager
+
+
+##SETUP MYSQL TABLE:
+NOTE: Please edit the query if you change the table name
+
+CREATE TABLE strawberry_forecast(coop_id INT, forecast_ts BIGINT UNSIGNED, data TEXT DEFAULT '', last_updated TIMESTAMP) ENGINE=InnoDB;
+CREATE INDEX sf_id_ts ON strawberry_forecast(coop_id, forecast_ts);
+
+##DATA FORMATS:
+
+The following formats are used:
+###MYSQL:
+COOP_ID int | FORECAST_TS int | DATA text | LAST_UPDATED timestamp
+
+###DATA:
+<< NDFD Element Name, *type*>>
+
+\*All NDFD Elements may nor may not be present
+
+{“ts” : “<<timestamp,*unix*>>”, “hourly-temperature” : “<<temp, *int*>>”, “relative-humidity” : “<<rh, *int*>>”, “dew-point-temperature” : “<<dew, *int*>>”, “12-hour-probability-of-precipitation” : “<<pop12, *int*>>”, “liquid-precipittion” : “<<qpf, *float*>>”}
