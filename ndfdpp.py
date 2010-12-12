@@ -11,6 +11,7 @@ import datetime
 
 parser = argparse.ArgumentParser(description='Gather NDFD data and put it into MySQL')
 parser.add_argument('-r', dest='retry', action='store_true')
+parser.add_argument('-d', dest='debug', action='store_true')
 args = parser.parse_args()
 
 
@@ -32,8 +33,6 @@ db_user       = 'user'
 db_pass       = 'pass'
 db_database   = 'database'
 
-# DEBUGGING
-debug = True
 # CONFIGURATION END - PLEASE DO NOT EDIT PAST THIS POINT
 
 oldpickledata = {}
@@ -49,7 +48,7 @@ except IOError:
 if args.retry:
 	if 'rerun' in oldpickledata:
 		if not oldpickledata['rerun']:
-			if debug:
+			if args.debug:
 				print "No need to re-run."
 			sys.exit(0)
 		
@@ -93,7 +92,7 @@ response.close()
 
 times = xml.getElementsByTagName('start-valid-time')
 if len(times) == 0:
-	oldpickedata['data'] = oldpickledata
+	oldpickledata['data'] = oldpickledata
 	oldpickledata['rerun'] = True
 	pickle_file = open('sqlcache.db', 'wb')
 	pickle.dump(oldpickledata, pickle_file, -1)
@@ -159,21 +158,27 @@ for station_id, station_data in finaldata.iteritems():
 		time_data['timestamp'] = ts
 		data = json.dumps(time_data)
 		if len(oldpickledata) > 0 and (str(station_id) in oldpickledata):
+			if args.debug:
+				print "Found old pickedata"
 			if ts in oldpickledata[str(station_id)]:
+				if args.debug:
+					print "Updaing for %s" % ts
 				sqlupdatedata.append((db.string_literal(data), str(station_id), str(ts)))
 			else:
+				if args.debug:
+					print "Inserting for %s - %s" % (station_id, ts)
 				sqlinsertdata.append((str(station_id), str(ts), db.string_literal(data)))
 		else:
 			sqlinsertdata.append((str(station_id), str(ts), db.string_literal(data)))
 
 c  = db.cursor()
 if len(sqlinsertdata) > 0:
-	if debug:
+	if args.debug:
 		print "Inserting %i row(s)" % len(sqlinsertdata)
 	c.executemany("""INSERT INTO strawberry_forecast(coop_id, forecast_ts, data) VALUES (%s, %s, %s)""", sqlinsertdata)
 	db.commit()
 if len(sqlupdatedata) > 0:
-	if debug:
+	if args.debug:
 		print "Updating %i row(s)" % len(sqlupdatedata)
 	c.executemany("""UPDATE strawberry_forecast SET data=%s WHERE coop_id=%s AND forecast_ts=%s""", sqlupdatedata)
 	db.commit()
