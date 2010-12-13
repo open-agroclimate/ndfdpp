@@ -7,13 +7,13 @@ import json
 import pickle
 import argparse
 import datetime
-
+import ConfigParser
 
 parser = argparse.ArgumentParser(description='Gather NDFD data and put it into MySQL')
+parser.add_argument('-c', dest='conffile')
 parser.add_argument('-r', dest='retry', action='store_true')
 parser.add_argument('-d', dest='debug', action='store_true')
 args = parser.parse_args()
-
 
 # CONFIGURATION START
 # List of NDFD Element eg. ['maxt', 'mint'] Leave [] for ALL variables
@@ -27,11 +27,18 @@ coop_id       = [490, 350, 360, 330, 290, 251, 111]
 locations     = [(27.22, -81.84), (27.76, -82.22), (28.02, -82.23), (28.10, -81.71), (29.22, -81.45), (28.75, -82.30), (28.02, -82.11)]
 
 # Database configuration
-db_host       = 'localhost'
-db_port       = 3306
-db_user       = 'user'
-db_pass       = 'pass'
-db_database   = 'database'
+if args.conffile:
+	conf_file = args.conffile
+else:
+	conf_file = 'config'
+
+config = ConfigParser.SafeConfigParser(defaults={'host':'localhost', 'port':3306, 'user':'user', 'password':'pass', 'database':'database'})
+config.read(conf_file)
+db_host       = config.get('mysql', 'host')
+db_port       = config.getint('mysql', 'port')
+db_user       = config.get('mysql', 'user')
+db_pass       = config.get('mysql', 'password')
+db_database   = config.get('mysql', 'database')
 
 # CONFIGURATION END - PLEASE DO NOT EDIT PAST THIS POINT
 
@@ -130,7 +137,7 @@ def build_finaldata(loc):
 		vardata = data['vals']
 		timestamps = timemap[data['key']]
 		for t,v in zip(timestamps, vardata):
-			ts = str(int(time.mktime(time.strptime(t[:-6], "%Y-%m-%dT%H:%M:%S"))) - time.timezone)
+			ts = t
 			if location not in finaldata:
 				finaldata[location] = {}
 			if ts not in finaldata[location]:
@@ -157,30 +164,25 @@ for station_id, station_data in finaldata.iteritems():
 		newpickledata[str(station_id)].append(ts)
 		time_data['timestamp'] = ts
 		data = json.dumps(time_data)
+		mts = str(datetime.datetime.strptime(ts[:-6], "%Y-%m-%dT%H:%M:%S"))
 		if len(oldpickledata) > 0 and (str(station_id) in oldpickledata):
-			if args.debug:
-				print "Found old pickedata"
 			if ts in oldpickledata[str(station_id)]:
-				if args.debug:
-					print "Updaing for %s" % ts
-				sqlupdatedata.append((db.string_literal(data), str(station_id), str(ts)))
+				sqlupdatedata.append((db.string_literal(data), str(station_id), mts))
 			else:
-				if args.debug:
-					print "Inserting for %s - %s" % (station_id, ts)
-				sqlinsertdata.append((str(station_id), str(ts), db.string_literal(data)))
+				sqlinsertdata.append((str(station_id), mts, db.string_literal(data)))
 		else:
-			sqlinsertdata.append((str(station_id), str(ts), db.string_literal(data)))
+			sqlinsertdata.append((str(station_id), mts, db.string_literal(data)))
 
 c  = db.cursor()
 if len(sqlinsertdata) > 0:
 	if args.debug:
 		print "Inserting %i row(s)" % len(sqlinsertdata)
-	c.executemany("""INSERT INTO strawberry_forecast(coop_id, forecast_ts, data) VALUES (%s, %s, %s)""", sqlinsertdata)
+	c.executemany("""INSERT INTO strawberry_forecast_data(coop_id, forecast_ts, data) VALUES (%s, %s, %s)""", sqlinsertdata)
 	db.commit()
 if len(sqlupdatedata) > 0:
 	if args.debug:
 		print "Updating %i row(s)" % len(sqlupdatedata)
-	c.executemany("""UPDATE strawberry_forecast SET data=%s WHERE coop_id=%s AND forecast_ts=%s""", sqlupdatedata)
+	c.executemany("""UPDATE strawberry_forecast_data SET data=%s WHERE coop_id=%s AND forecast_ts=%s""", sqlupdatedata)
 	db.commit()
 c.close()
 db.close()
