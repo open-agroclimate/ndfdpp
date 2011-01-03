@@ -8,6 +8,7 @@ import pickle
 import argparse
 import datetime
 import ConfigParser
+from itertools import izip
 
 parser = argparse.ArgumentParser(description='Gather NDFD data and put it into MySQL')
 parser.add_argument('-c', dest='conffile')
@@ -17,14 +18,17 @@ args = parser.parse_args()
 
 # CONFIGURATION START
 # List of NDFD Element eg. ['maxt', 'mint'] Leave [] for ALL variables
-ndfd_elements = ['temp', 'dew', 'rh', 'pop12', 'qpf']
+# http://www.nws.noaa.gov/xml/docs/elementInputNames.php
+ndfd_elements = ['temp', 'dew', 'rh', 'pop12', 'qpf', 'appt'] 
 
 # Either time-series or glance
 ndfd_product  = 'time-series'
 
 # List of latitude and longitude tuples. MUST BE PROVIDED
-coop_id       = [490, 350, 360, 330, 290, 251, 111]
-locations     = [(27.22, -81.84), (27.76, -82.22), (28.02, -82.23), (28.10, -81.71), (29.22, -81.45), (28.75, -82.30), (28.02, -82.11)]
+coop_id        = []
+locations      = []
+#coop_id       = [490, 350, 360, 330, 290, 251, 111]
+#locations     = [(27.22, -81.84), (27.76, -82.22), (28.02, -82.23), (28.10, -81.71), (29.22, -81.45), (28.75, -82.30), (28.02, -82.11)]
 
 # Database configuration
 if args.conffile:
@@ -41,6 +45,16 @@ db_pass       = config.get('mysql', 'password')
 db_database   = config.get('mysql', 'database')
 
 # CONFIGURATION END - PLEASE DO NOT EDIT PAST THIS POINT
+db = MySQLdb.connect(host=db_host, port=db_port, user=db_user, passwd=db_pass, db=db_database)
+dc = db.cursor(MySQLdb.cursors.DictCursor)
+dc.execute("SELECT id, lat, lon FROM stations")
+results = dc.fetchall()
+for entry in results:
+	coop_id.append(entry["id"])
+	locations.append((entry["lat"], entry["lon"]))
+db.commit()
+dc.close()
+db.close()
 
 oldpickledata = {}
 runtime       = datetime.datetime.now()
@@ -67,7 +81,6 @@ timemap   = {}
 datamap   = {}
 finaldata = {}
 
-
 ndfd_url = "http://www.weather.gov/forecasts/xml/sample_products/browser_interface/ndfdXMLclient.php"
 
 def gen_loc(head, tail):
@@ -79,37 +92,6 @@ def gen_loc(head, tail):
 		lat, lon = tail
 		return "%s %s,%s" % (head, lat, lon)
 
-if len(locations) == 0:
-	err =  "ERROR: Invalid configuration: locations"
-	sys.exit(err)
-elif len(locations) == 1:
-	ndfd_loc = "%.2f,%.2f" % locations[0]
-else:
-	ndfd_loc = urllib.quote(reduce(gen_loc, locations))
-
-ndfd_el = '&'.join(map(lambda e: "%s=%s" % (e,e), ndfd_elements))
-ndfd_url = "%s?listLatLon=%s&product=%s&%s" % (ndfd_url, ndfd_loc, ndfd_product, ndfd_el)
-
-
-# Get the url and parse the information from it (using minidom)
-response = urllib.urlopen(ndfd_url)
-# Send the information to the parser
-xml = xml.dom.minidom.parse(response)
-response.close()
-
-times = xml.getElementsByTagName('start-valid-time')
-if len(times) == 0:
-	oldpickledata['data'] = oldpickledata
-	oldpickledata['rerun'] = True
-	pickle_file = open('sqlcache.db', 'wb')
-	pickle.dump(oldpickledata, pickle_file, -1)
-	pickle_file.close()
-	sys.exit("NDFD REST Service not responding at %s" % runtime.isoformat())
-
-values = xml.getElementsByTagName('value')
-
-
-
 def build_timemap(time):
 	key = time.parentNode.firstChild.nextSibling.firstChild.nodeValue.strip()
 	val = time.firstChild.nodeValue.strip()
@@ -118,7 +100,11 @@ def build_timemap(time):
 	timemap[key].append(val)
 
 def build_datamap(data):
-	loc = "%s" % str(locations[int(data.parentNode.parentNode.getAttribute('applicable-location')[-1:])-1])
+	apploc = data.parentNode.parentNode.getAttribute('applicable-location')
+	apploc = filter(type(apploc).isdigit, apploc)
+	print apploc
+	loc = "%s" % str(location[int(apploc)-1])
+	print "Location identified: %s" % loc
 	parent = data.parentNode.nodeName
 	vartype   = '-'.join(data.parentNode.getAttribute('type').split())
 	parent = '-'.join((vartype, parent))
@@ -132,28 +118,69 @@ def build_datamap(data):
 
 def build_finaldata(loc):
 	loc_index = locations.index(tuple(map(float, loc[1:-1].split(','))))
-	location  = str(coop_id[loc_index])
+	locale  = str(coop_id[loc_index])
 	for varname, data in datamap[loc].iteritems():
 		vardata = data['vals']
 		timestamps = timemap[data['key']]
-		for t,v in zip(timestamps, vardata):
+		for t,v in izip(timestamps, vardata):
 			ts = t
-			if location not in finaldata:
-				finaldata[location] = {}
-			if ts not in finaldata[location]:
-				finaldata[location][ts] = {}
-			finaldata[location][ts][varname] = v
+			if locale not in finaldata:
+				finaldata[locale] = {}
+			if ts not in finaldata[locale]:
+				finaldata[locale][ts] = {}
+			finaldata[locale][ts][varname] = v
 
-# Building the values in-memory via maps
-map(build_timemap, times)
-map(build_datamap, values)
-map(build_finaldata, datamap)
+
+loc_lists = []
+id_lists  = []
+i = len( locations ) / 150
+while i >= 0:
+	loc_lists.append( locations[i*150:i*150+150] )
+	id_lists.append( coop_id[i*150:i*150+150] )
+	i = i - 1
+
+loc_lists.reverse()
+for location, st_id in izip(loc_lists, id_lists):
+	ndfd_url = "http://www.weather.gov/forecasts/xml/sample_products/browser_interface/ndfdXMLclient.php"
+
+	if len(location) == 0:
+		err =  "ERROR: Invalid configuration: locations"
+		sys.exit(err)
+	elif len(location) == 1:
+		ndfd_loc = "%.2f,%.2f" % location[0]
+	else:
+		ndfd_loc = urllib.quote(reduce(gen_loc, location))
+		print ndfd_loc
+
+	ndfd_el = '&'.join(map(lambda e: "%s=%s" % (e,e), ndfd_elements))
+	ndfd_url = "%s?listLatLon=%s&product=%s&%s" % (ndfd_url, ndfd_loc, ndfd_product, ndfd_el)
+
+
+	# Get the url and parse the information from it (using minidom)
+	response = urllib.urlopen(ndfd_url)
+	# Send the information to the parser
+	xmlret = xml.dom.minidom.parse(response)
+	response.close()
+	times = xmlret.getElementsByTagName('start-valid-time')
+	if len(times) == 0:
+		oldpickledata['data'] = oldpickledata
+		oldpickledata['rerun'] = True
+		pickle_file = open('sqlcache.db', 'wb')
+		pickle.dump(oldpickledata, pickle_file, -1)
+		pickle_file.close()
+		sys.exit("NDFD REST Service not responding at %s" % runtime.isoformat())
+
+	values = xmlret.getElementsByTagName('value')
+
+	# Building the values in-memory via maps
+	map(build_timemap, times)
+	map(build_datamap, values)
+	map(build_finaldata, datamap)
 
 # Datbase interaction
 sqlinsertdata = []
 sqlupdatedata = []
 newpickledata = {}
-
 
 # Need the database object to cleanup the json object
 db = MySQLdb.connect(host=db_host, port=db_port, user=db_user, passwd=db_pass, db=db_database)
