@@ -102,9 +102,7 @@ def build_timemap(time):
 def build_datamap(data):
 	apploc = data.parentNode.parentNode.getAttribute('applicable-location')
 	apploc = filter(type(apploc).isdigit, apploc)
-	print apploc
 	loc = "%s" % str(location[int(apploc)-1])
-	print "Location identified: %s" % loc
 	parent = data.parentNode.nodeName
 	vartype   = '-'.join(data.parentNode.getAttribute('type').split())
 	parent = '-'.join((vartype, parent))
@@ -150,7 +148,6 @@ for location, st_id in izip(loc_lists, id_lists):
 		ndfd_loc = "%.2f,%.2f" % location[0]
 	else:
 		ndfd_loc = urllib.quote(reduce(gen_loc, location))
-		print ndfd_loc
 
 	ndfd_el = '&'.join(map(lambda e: "%s=%s" % (e,e), ndfd_elements))
 	ndfd_url = "%s?listLatLon=%s&product=%s&%s" % (ndfd_url, ndfd_loc, ndfd_product, ndfd_el)
