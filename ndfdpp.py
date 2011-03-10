@@ -1,6 +1,7 @@
 import xml.dom.minidom
 import MySQLdb
 import urllib
+import urllib2
 import sys
 import time
 import json
@@ -14,12 +15,14 @@ parser = argparse.ArgumentParser(description='Gather NDFD data and put it into M
 parser.add_argument('-c', dest='conffile')
 parser.add_argument('-r', dest='retry', action='store_true')
 parser.add_argument('-d', dest='debug', action='store_true')
+parser.add_argument('-u', dest='url',   action='store_true')
+parser.add_argument('-i', dest='insertonly', action='store_true')
 args = parser.parse_args()
 
 # CONFIGURATION START
 # List of NDFD Element eg. ['maxt', 'mint'] Leave [] for ALL variables
 # http://www.nws.noaa.gov/xml/docs/elementInputNames.php
-ndfd_elements = ['temp', 'dew', 'rh', 'pop12', 'qpf', 'appt'] 
+ndfd_elements = ['temp', 'dew', 'rh', 'pop12', 'qpf'] 
 
 # Either time-series or glance
 ndfd_product  = 'time-series'
@@ -152,9 +155,11 @@ for location, st_id in izip(loc_lists, id_lists):
 	ndfd_el = '&'.join(map(lambda e: "%s=%s" % (e,e), ndfd_elements))
 	ndfd_url = "%s?listLatLon=%s&product=%s&%s" % (ndfd_url, ndfd_loc, ndfd_product, ndfd_el)
 
-
+	if args.url:
+		print ndfd_url
+		continue
 	# Get the url and parse the information from it (using minidom)
-	response = urllib.urlopen(ndfd_url)
+	response = urllib2.urlopen(ndfd_url)
 	# Send the information to the parser
 	xmlret = xml.dom.minidom.parse(response)
 	response.close()
@@ -174,6 +179,9 @@ for location, st_id in izip(loc_lists, id_lists):
 	map(build_datamap, values)
 	map(build_finaldata, datamap)
 
+if args.url:
+	sys.exit(0)
+
 # Datbase interaction
 sqlinsertdata = []
 sqlupdatedata = []
@@ -191,7 +199,10 @@ for station_id, station_data in finaldata.iteritems():
 		mts = str(datetime.datetime.strptime(ts[:-6], "%Y-%m-%dT%H:%M:%S"))
 		if len(oldpickledata) > 0 and (str(station_id) in oldpickledata):
 			if ts in oldpickledata[str(station_id)]:
-				sqlupdatedata.append((db.string_literal(data), str(station_id), mts))
+				if args.insertonly:
+					sqlupdatedata.append((str(station_id), mts, db.string_literal(data)))
+				else:
+					sqlupdatedata.append((db.string_literal(data), str(station_id), mts))
 			else:
 				sqlinsertdata.append((str(station_id), mts, db.string_literal(data)))
 		else:
@@ -204,9 +215,14 @@ if len(sqlinsertdata) > 0:
 	c.executemany("""INSERT INTO strawberry_forecast_data(coop_id, forecast_ts, data) VALUES (%s, %s, %s)""", sqlinsertdata)
 	db.commit()
 if len(sqlupdatedata) > 0:
-	if args.debug:
-		print "Updating %i row(s)" % len(sqlupdatedata)
-	c.executemany("""UPDATE strawberry_forecast_data SET data=%s WHERE coop_id=%s AND forecast_ts=%s""", sqlupdatedata)
+	if args.insertonly:
+		if args.debug:
+			print "Inserting %i row(s)" % len(sqlupdatedata)
+		c.executemany("""INSERT INTO strawberry_forecast_data(coop_id, forecast_ts, data) VALUES (%s, %s, %s)""", sqlupdatedata)
+	else:
+		if args.debug:
+			print "Updating %i row(s)" % len(sqlupdatedata)
+		c.executemany("""UPDATE strawberry_forecast_data SET data=%s WHERE coop_id=%s AND forecast_ts=%s""", sqlupdatedata)
 	db.commit()
 c.close()
 db.close()
