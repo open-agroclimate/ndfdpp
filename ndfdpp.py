@@ -22,14 +22,14 @@ args = parser.parse_args()
 # CONFIGURATION START
 # List of NDFD Element eg. ['maxt', 'mint'] Leave [] for ALL variables
 # http://www.nws.noaa.gov/xml/docs/elementInputNames.php
-ndfd_elements = ['temp', 'dew', 'rh', 'pop12', 'qpf'] 
+ndfd_elements = ['mint', 'maxt', 'dew', 'rh', 'pop12', 'qpf', 'sky', 'wspd'] 
 
 # Either time-series or glance
 ndfd_product  = 'time-series'
 
 # List of latitude and longitude tuples. MUST BE PROVIDED
-coop_id        = []
-locations      = []
+coop_id        = [21]
+locations      = [(29.80, -82.41)]
 #coop_id       = [490, 350, 360, 330, 290, 251, 111]
 #locations     = [(27.22, -81.84), (27.76, -82.22), (28.02, -82.23), (28.10, -81.71), (29.22, -81.45), (28.75, -82.30), (28.02, -82.11)]
 
@@ -39,25 +39,27 @@ if args.conffile:
 else:
 	conf_file = 'config'
 
-config = ConfigParser.SafeConfigParser(defaults={'host':'localhost', 'port':3306, 'user':'user', 'password':'pass', 'database':'database'})
+config = ConfigParser.SafeConfigParser(defaults={'host':'localhost', 'port':3306, 'user':'user', 'password':'pass', 'database':'database', 'desttable':'forecast_data'})
 config.read(conf_file)
 db_host       = config.get('mysql', 'host')
 db_port       = config.getint('mysql', 'port')
 db_user       = config.get('mysql', 'user')
 db_pass       = config.get('mysql', 'password')
 db_database   = config.get('mysql', 'database')
+data_table    = config.get('mysql', 'desttable')
 
 # CONFIGURATION END - PLEASE DO NOT EDIT PAST THIS POINT
-db = MySQLdb.connect(host=db_host, port=db_port, user=db_user, passwd=db_pass, db=db_database)
-dc = db.cursor(MySQLdb.cursors.DictCursor)
-dc.execute("SELECT id, lat, lon FROM stations")
-results = dc.fetchall()
-for entry in results:
-	coop_id.append(entry["id"])
-	locations.append((entry["lat"], entry["lon"]))
-db.commit()
-dc.close()
-db.close()
+if len(locations) == 0:
+	db = MySQLdb.connect(host=db_host, port=db_port, user=db_user, passwd=db_pass, db=db_database)
+	dc = db.cursor(MySQLdb.cursors.DictCursor)
+	dc.execute("SELECT id, lat, lon FROM stations")
+	results = dc.fetchall()
+	for entry in results:
+		coop_id.append(entry["id"])
+		locations.append((entry["lat"], entry["lon"]))
+	db.commit()
+	dc.close()
+	db.close()
 
 oldpickledata = {}
 runtime       = datetime.datetime.now()
@@ -212,17 +214,17 @@ c  = db.cursor()
 if len(sqlinsertdata) > 0:
 	if args.debug:
 		print "Inserting %i row(s)" % len(sqlinsertdata)
-	c.executemany("""INSERT INTO strawberry_forecast_data(coop_id, forecast_ts, data) VALUES (%s, %s, %s)""", sqlinsertdata)
+	c.executemany("""INSERT INTO """+data_table+"""(coop_id, forecast_ts, data) VALUES (%s, %s, %s)""", sqlinsertdata)
 	db.commit()
 if len(sqlupdatedata) > 0:
 	if args.insertonly:
 		if args.debug:
 			print "Inserting %i row(s)" % len(sqlupdatedata)
-		c.executemany("""INSERT INTO strawberry_forecast_data(coop_id, forecast_ts, data) VALUES (%s, %s, %s)""", sqlupdatedata)
+		c.executemany("""INSERT INTO """+data_table+"""(coop_id, forecast_ts, data) VALUES (%s, %s, %s)""", sqlupdatedata)
 	else:
 		if args.debug:
 			print "Updating %i row(s)" % len(sqlupdatedata)
-		c.executemany("""UPDATE strawberry_forecast_data SET data=%s WHERE coop_id=%s AND forecast_ts=%s""", sqlupdatedata)
+		c.executemany("""UPDATE """+data_table+""" SET data=%s WHERE coop_id=%s AND forecast_ts=%s""", sqlupdatedata)
 	db.commit()
 c.close()
 db.close()
